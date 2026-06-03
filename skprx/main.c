@@ -191,11 +191,9 @@ int update_keyboard(SceSize args, void* argp)
         }
         ksceKernelUnlockMutex(mtxLock, 1);
 
-        ksceKernelCpuDcacheAndL2WritebackRange(g_inputs, sizeof(g_inputs));
-
         if (ksceUdcdGetDeviceState() & SCE_UDCD_STATUS_CONNECTION_ESTABLISHED && changed)
             send_inputs();
-            
+
         ksceKernelDelayThread(10000);
 
         changed = 0;
@@ -203,7 +201,7 @@ int update_keyboard(SceSize args, void* argp)
     return 0;
 }
 
-void _start() __attribute__ ((weak, alias ("module_start")));
+int _start(SceSize args, void *argp) __attribute__ ((weak, alias ("module_start")));
 
 int module_start (SceSize args, void *argp)
 {
