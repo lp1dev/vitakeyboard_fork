@@ -3,85 +3,56 @@
 #include <psp2kern/kernel/threadmgr.h>
 #include <psp2kern/udcd.h>
 
-#include "log.h"
 #include "uapi/hidkeyboard_uapi.h"
 #include "usb_descriptors.h"
 #include "ascii_to_usb_hid.h"
 #include "layouts/layouts.h"
 
-#define Kprintf(...) (void)0
+#define VITA_USB_KEYBOARD       "VITA_KEYBOARD"
+#define VITA_USB_KEYBOARD_PID   0x1338
 
-#define VITA_USB_KEYBOARD                    "VITA_KEYBOARD"
-#define VITA_USB_KEYBOARD_PID                0x1338
-
-static char g_inputs[8] __attribute__((aligned(64))) = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+static char g_inputs[8] __attribute__((aligned(64))) = { 0 };
 static struct SceUdcdDeviceRequest g_request;
 static struct SceUdcdDeviceRequest g_reportrequest;
 static SceUID g_thid = -1;
 static int g_run = 1;
 
 static int hidkeyboard_driver_registered = 0;
-static int hidkeyboard_driver_activated = 0;
+static int hidkeyboard_driver_activated  = 0;
 
-static int hasPendingKey = 0;
-static char pendingKey = 0x00;
-static char modifier = 0x00;
+static int  hasPendingKey = 0;
+static char pendingKey    = 0x00;
+static char modifier      = 0x00;
 int mtxLock = -1;
 
-/* Forward define driver functions */
-static int start_func(int size, void* args, void* user_data);
-static int stop_func(int size, void* args, void* user_data);
-static int usb_recvctl(int arg1, int arg2, struct SceUdcdEP0DeviceRequest* req, void* user_data);
-static int usb_change(int interfaceNumber, int alternateSetting, int bus);
-static int usb_attach(int usb_version, void* user_data);
+/* Forward declarations */
+static int  start_func(int size, void* args, void* user_data);
+static int  stop_func(int size, void* args, void* user_data);
+static int  usb_recvctl(int arg1, int arg2, struct SceUdcdEP0DeviceRequest* req, void* user_data);
+static int  usb_change(int interfaceNumber, int alternateSetting, int bus);
+static int  usb_attach(int usb_version, void* user_data);
 static void usb_detach(void* user_data);
 static void usb_configure(int usb_version, int desc_count, struct SceUdcdInterfaceSettings* settings, void* user_data);
 
-/* USB host driver */
 struct SceUdcdDriver g_driver =
 {
-    VITA_USB_KEYBOARD,  /* driverName */
-    2,                  /* numEndpoints */
-    &endpoints[0],      /* endpoints */
-    &interfaces[0],     /* interface */
-    &devdesc_hi,        /* descriptor_hi */
-    &config_hi,         /* configuration_hi */
-    &devdesc_full,      /* descriptor */
-    &config_full,       /* configuration */
-    &descriptors[0],    /* stringDescriptors */
-    NULL,
-    NULL,
-    &usb_recvctl,       /* processRequest */
-    &usb_change,        /* chageSetting */
-    &usb_attach,        /* attach */
-    &usb_detach,        /* detach */
-    &usb_configure,     /* configure */
-    &start_func,        /* start func */
-    &stop_func,         /* stop func */
-    0,
-    0,
-    NULL                /* link to driver */
+    VITA_USB_KEYBOARD, 2, &endpoints[0], &interfaces[0],
+    &devdesc_hi, &config_hi, &devdesc_full, &config_full,
+    &descriptors[0], NULL, NULL,
+    &usb_recvctl, &usb_change, &usb_attach, &usb_detach, &usb_configure,
+    &start_func, &stop_func, 0, 0, NULL
 };
-
 
 static void send_inputs(void);
 
-static
-void complete_request(struct SceUdcdDeviceRequest* req)
+static void complete_request(struct SceUdcdDeviceRequest* req)
 {
-    Kprintf("complete_request\n");
     req->unused = NULL;
 }
 
-
-/* Device request */
-static
-int usb_recvctl(int arg1, int arg2, struct SceUdcdEP0DeviceRequest* req, void* user_data)
+static int usb_recvctl(int arg1, int arg2, struct SceUdcdEP0DeviceRequest* req, void* user_data)
 {
-    Kprintf("recvctl: %x %x\n", arg1, arg2);
-    Kprintf("request: %x type: %x wValue: %x wIndex: %x wLength: %x\n",
-        req->bRequest, req->bmRequestType, req->wValue, req->wIndex, req->wLength);
-
+    /* Host requesting HID report descriptor */
     if (req->bmRequestType == 0x81 && req->bRequest == 0x06 && req->wValue == 0x2200 && arg2 != -1) {
         if (!g_reportrequest.unused) {
             g_reportrequest.data = hid_report;
@@ -96,135 +67,105 @@ int usb_recvctl(int arg1, int arg2, struct SceUdcdEP0DeviceRequest* req, void* u
             g_reportrequest.unused = &g_reportrequest;
             g_reportrequest.next = NULL;
             g_reportrequest.physicalAddress = NULL;
-            ksceUdcdReqSend (&g_reportrequest);
+            ksceUdcdReqSend(&g_reportrequest);
         }
     }
     return 0;
 }
 
-/* Alternate settings */
-static
-int usb_change(int interfaceNumber, int alternateSetting, int bus)
+static int  usb_change(int interfaceNumber, int alternateSetting, int bus) { return 0; }
+static int  usb_attach(int usb_version, void* user_data) { return 0; }
+static void usb_detach(void* user_data) {}
+static void usb_configure(int usb_version, int desc_count, struct SceUdcdInterfaceSettings* settings, void* user_data) {}
+static int  start_func(int size, void* p, void* user_data) { return 0; }
+static int  stop_func(int size, void* p, void* user_data)  { return 0; }
+
+static void send_inputs(void)
 {
-    Kprintf("usb_change %d %d\n", interfaceNumber, alternateSetting);
-    return 0;
+    if (g_request.unused)
+        return;
+
+    g_request.endpoint         = &endpoints[1];
+    g_request.data             = g_inputs;
+    g_request.size             = sizeof(g_inputs);
+    g_request.isControlRequest = 0;
+    g_request.onComplete       = &complete_request;
+    g_request.transmitted      = 0;
+    g_request.returnCode       = 0;
+    g_request.unused           = &g_request;
+    g_request.next             = NULL;
+    g_request.physicalAddress  = NULL;
+
+    /* Critical: flush the cache so DMA sees current g_inputs contents.
+     * Without this, the USB controller reads stale data and the host
+     * never sees key-up events (or sees repeated key-down). */
+    ksceKernelDcacheCleanRange(g_inputs, sizeof(g_inputs));
+    ksceUdcdReqSend(&g_request);
 }
 
-/* Attach callback */
-static
-int usb_attach(int usb_version, void* user_data)
-{
-    Kprintf("usb_attach %d\n", usb_version);
-    return 0;
-}
-
-/* Detach callback */
-static
-void usb_detach(void* user_data)
-{
-    Kprintf("usb_detach\n");
-}
-
-static
-void usb_configure(int usb_version, int desc_count, struct SceUdcdInterfaceSettings* settings, void* user_data)
-{
-    Kprintf("usb_configure %d %d %p %d\n", usb_version, desc_count, settings, settings->numDescriptors);
-}
-
-/* USB start function */
-static
-int start_func(int size, void* p, void* user_data)
-{
-    Kprintf("start\n");
-    return 0;
-}
-
-/* USB stop function */
-static
-int stop_func(int size, void* p, void* user_data)
-{
-    Kprintf("stop\n");
-    return 0;
-}
-
-static
-void send_inputs(void)
-{
-    if (!g_request.unused) {
-        g_request.endpoint = &endpoints[1];
-        g_request.data = g_inputs;
-        g_request.size = sizeof(g_inputs);
-        g_request.isControlRequest = 0;
-        g_request.onComplete = &complete_request;
-        g_request.transmitted = 0;
-        g_request.returnCode = 0;
-        g_request.unused = &g_request;
-        g_request.next = NULL;
-        g_request.physicalAddress = NULL;
-        ksceUdcdReqSend(&g_request);
-    }
-}
-
-static
-int update_keyboard(SceSize args, void* argp)
+static int update_keyboard(SceSize args, void* argp)
 {
     int pressed = 0;
     int changed = 0;
 
     while (g_run) {
+        /* Don't touch state until the host has actually established the connection.
+         * If we send keys before this, they're consumed into the void. */
+        unsigned int state = ksceUdcdGetDeviceState();
+        if (!(state & SCE_UDCD_STATUS_CONNECTION_ESTABLISHED)) {
+            ksceKernelDelayThread(10000);
+            continue;
+        }
 
         ksceKernelLockMutex(mtxLock, 1, 0);
-        if (hasPendingKey && !pressed) {
+        if (pressed) {
+            /* Release */
+            g_inputs[0] = 0x00;
+            g_inputs[2] = 0x00;
+            pressed = 0;
+            changed = 1;
+        }
+        else if (hasPendingKey) {
+            /* Press */
             g_inputs[0] = modifier;
             g_inputs[2] = pendingKey;
-
             hasPendingKey = 0;
             pressed = 1;
             changed = 1;
         }
-        else if (pressed) {
-            g_inputs[0] = 0x00;
-            g_inputs[2] = 0x00;
-
-            pressed = 0;
-            changed = 1;
-        }
         ksceKernelUnlockMutex(mtxLock, 1);
 
-        if (ksceUdcdGetDeviceState() & SCE_UDCD_STATUS_CONNECTION_ESTABLISHED && changed)
+        if (changed) {
             send_inputs();
+            changed = 0;
+        }
 
         ksceKernelDelayThread(10000);
-
-        changed = 0;
     }
     return 0;
 }
 
-int _start(SceSize args, void *argp) __attribute__ ((weak, alias ("module_start")));
+int _start(SceSize args, void *argp) __attribute__((weak, alias("module_start")));
 
-int module_start (SceSize args, void *argp)
+int module_start(SceSize args, void *argp)
 {
-    int ret = 0;
+    int ret;
 
-    g_thid = ksceKernelCreateThread("update_thread", &update_keyboard, 0x3C, 0x1000, 0, 0x10000, 0);
-    if (g_thid < 0) {
+    g_thid = ksceKernelCreateThread("update_thread", &update_keyboard,
+                                    0x3C, 0x1000, 0, 0x10000, 0);
+    if (g_thid < 0)
         goto err_return;
-    }
 
     ret = ksceUdcdRegister(&g_driver);
-    if (ret < 0) {
+    if (ret < 0)
         goto err_destroy_thread;
-    }
 
     ret = ksceKernelStartThread(g_thid, 0, 0);
-    if (ret < 0) {
+    if (ret < 0)
         goto err_unregister;
-    }
 
-    hidkeyboard_driver_activated = 0;
+    hidkeyboard_driver_activated  = 0;
     hidkeyboard_driver_registered = 1;
-
     return SCE_KERNEL_START_SUCCESS;
 
 err_unregister:
@@ -235,7 +176,7 @@ err_return:
     return SCE_KERNEL_START_FAILED;
 }
 
-int module_stop (SceSize args, void *argp)
+int module_stop(SceSize args, void *argp)
 {
     if (g_thid > 0) {
         SceUInt timeout = 0xFFFFFFFF;
@@ -243,12 +184,10 @@ int module_stop (SceSize args, void *argp)
         ksceKernelWaitThreadEnd(g_thid, NULL, &timeout);
         ksceKernelDeleteThread(g_thid);
     }
-
     ksceUdcdDeactivate();
     ksceUdcdStop(VITA_USB_KEYBOARD, 0, NULL);
     ksceUdcdStop("USBDeviceControllerDriver", 0, NULL);
     ksceUdcdUnregister(&g_driver);
-
     return SCE_KERNEL_STOP_SUCCESS;
 }
 
@@ -263,7 +202,7 @@ int hidkeyboard_user_start(void)
         EXIT_SYSCALL(state);
         return HIDKEYBOARD_ERROR_DRIVER_NOT_REGISTERED;
     }
-    else if (hidkeyboard_driver_activated) {
+    if (hidkeyboard_driver_activated) {
         EXIT_SYSCALL(state);
         return HIDKEYBOARD_ERROR_DRIVER_ALREADY_ACTIVATED;
     }
@@ -301,7 +240,6 @@ int hidkeyboard_user_start(void)
     }
 
     mtxLock = ksceKernelCreateMutex("HidKeyboardMutex", 0, 0, 0);
-
     hidkeyboard_driver_activated = 1;
 
     EXIT_SYSCALL(state);
@@ -311,7 +249,6 @@ int hidkeyboard_user_start(void)
 int hidkeyboard_user_stop(void)
 {
     int state = 0;
-
     ENTER_SYSCALL(state);
 
     if (!hidkeyboard_driver_activated) {
@@ -328,7 +265,6 @@ int hidkeyboard_user_stop(void)
 
     ksceKernelDeleteMutex(mtxLock);
     mtxLock = -1;
-
     hidkeyboard_driver_activated = 0;
 
     EXIT_SYSCALL(state);
@@ -338,45 +274,37 @@ int hidkeyboard_user_stop(void)
 int HidKeyBoardSendModifierAndKey(char mod, char key)
 {
     int state = 0;
-
     ENTER_SYSCALL(state);
 
     ksceKernelLockMutex(mtxLock, 1, 0);
     hasPendingKey = 1;
-    modifier = mod;
-    pendingKey = key;
+    modifier      = mod;
+    pendingKey    = key;
     ksceKernelUnlockMutex(mtxLock, 1);
 
     EXIT_SYSCALL(state);
-
     return 0;
 }
 
-// sets the key to be sent from an UTF16 character
 int HidKeyboardSendChar(unsigned short int c)
 {
     int state = 0;
-
     ENTER_SYSCALL(state);
 
-    utf16_to_hid_mapping map;
+    utf16_to_hid_mapping map = getLayoutMappingFromUtf16(c, pt_BR_layout,
+        sizeof(pt_BR_layout) / sizeof(utf16_to_hid_mapping));
 
-    map = getLayoutMappingFromUtf16(c, pt_BR_layout, sizeof(pt_BR_layout) / sizeof(utf16_to_hid_mapping));
-
-    // just ignore characters that can't be sent with current layout
     if (map.utf16_char == VITAKEYBOARD_ERR_MAPPING_NOT_FOUND) {
+        EXIT_SYSCALL(state);
         return 0;
     }
 
     ksceKernelLockMutex(mtxLock, 1, 0);
-
     hasPendingKey = 1;
-    pendingKey = map.hid_key1;
-    modifier = map.hid_modifiers1;
-
+    pendingKey    = map.hid_key1;
+    modifier      = map.hid_modifiers1;
     ksceKernelUnlockMutex(mtxLock, 1);
 
     EXIT_SYSCALL(state);
-
     return 0;
 }
