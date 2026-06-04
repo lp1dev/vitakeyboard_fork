@@ -1,13 +1,15 @@
 # vitakeyboard_fork
 
-A PS Vita kernel plugin (skprx) and userland wrapper that emulates a USB HID
-keyboard. When activated, the Vita appears to a connected host as a standard
+A PS Vita kernel plugin (skprx) that emulates a USB HID
+keyboard. 
+
+When activated, the Vita appears to a connected host as a standard
 USB keyboard (PID `054c:1338`) and can inject keystrokes into the host.
 
 This is a fork of [mswlandi/vitakeyboard](mswlandi/vitakeyboard) 
 that would **absolutely not exist** without mswlandi's work.
 
-with three architectural fixes to make it work better:
+I added three architectural fixes to make it work better:
 
 1. Cache flush before every DMA send (`ksceKernelDcacheCleanRange`)
 2. Connection-state gating before sending any report
@@ -17,8 +19,10 @@ with three architectural fixes to make it work better:
 
 ## Architecture overview
 
-This fork is what the [quark](https://github.com/lp1dev/quark) engine 
-uses to be able to send keyboard inputs.
+This fork has been built for the [quark](https://github.com/lp1dev/quark) engine, 
+for it to be able to send keyboard inputs.
+
+You can see an example usage of it in [keyboard_vita.c](https://github.com/lp1dev/quark/blob/main/src/usb/keyboard_vita.c).
 
 Here is my current usage of this fork for reference:
 
